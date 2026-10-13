@@ -13,8 +13,6 @@ FROM debian:bookworm-slim@${DEBIAN_DIGEST} AS build
 
 ARG SBCL_VERSION
 ARG RUN_SBCL_TESTS=no
-ARG TARGETARCH
-ARG DEBIAN_DIGEST
 
 ENV XDG_CONFIG_DIRS=/usr/local/etc/xdg:/etc/xdg
 
@@ -46,23 +44,33 @@ COPY build/load-quicklisp.lisp /usr/local/share/kulhar-builder/load-quicklisp.li
 COPY build/install-tools.sh /src/build/
 RUN sh /src/build/install-tools.sh
 
-COPY build/write-manifest.sh /src/build/
-RUN sh /src/build/write-manifest.sh "$TARGETARCH" "$DEBIAN_DIGEST"
-
 
 FROM debian:bookworm-slim@${DEBIAN_DIGEST}
 
-# Upgrade first so monthly rebuilds pick up Debian security fixes.
+COPY --from=build /usr/local /usr/local
+
+ARG TARGETARCH
+ARG DEBIAN_DIGEST
+# The workflow sets this to the build date. It only exists to change the
+# cache key, so cached layers can't hide Debian security fixes.
+ARG APT_REFRESH=
+
+# Upgrade so rebuilds pick up Debian security fixes.
 # gcc, libc6-dev, make and pkg-config: CFFI's groveller compiles C while
 # loading some libraries. libzstd1: the sbcl runtime links it. libssl3: qlot
 # fetches over HTTPS through cl+ssl. git: qlot and ocicl fetch git sources.
-RUN apt-get update \
+# jq is only needed to write the manifest, which records the versions of the
+# packages installed here, and is removed again in the same layer.
+RUN --mount=type=bind,source=versions.json,target=/src/versions.json \
+    --mount=type=bind,source=build/write-manifest.sh,target=/src/build/write-manifest.sh \
+    echo "apt refresh: ${APT_REFRESH:-none}" \
+ && apt-get update \
  && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
-      ca-certificates gcc git libc6-dev libssl3 libzstd1 make pkg-config \
+      ca-certificates gcc git libc6-dev libssl3 libzstd1 make pkg-config jq \
+ && sh /src/build/write-manifest.sh "$TARGETARCH" "$DEBIAN_DIGEST" \
+ && apt-get purge -y --autoremove jq \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/*.bin /var/log/apt /var/log/dpkg.log
-
-COPY --from=build /usr/local /usr/local
 
 # kulhar runs this image as the host user's UID, which has no passwd entry.
 # Everything a build writes goes under world-writable, sticky directories.

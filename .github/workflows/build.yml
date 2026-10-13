@@ -140,6 +140,7 @@ jobs:
           sbom: false
           build-args: |
             SBCL_VERSION=${{ matrix.sbcl }}
+            APT_REFRESH=${{ needs.prepare.outputs.date }}
             IMAGE_VERSION=sbcl-${{ matrix.sbcl }}-bookworm-${{ needs.prepare.outputs.date }}
             IMAGE_REVISION=${{ github.sha }}
             IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
@@ -169,6 +170,7 @@ jobs:
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             SBCL_VERSION=${{ matrix.sbcl }}
+            APT_REFRESH=${{ needs.prepare.outputs.date }}
             IMAGE_VERSION=sbcl-${{ matrix.sbcl }}-bookworm-${{ needs.prepare.outputs.date }}
             IMAGE_REVISION=${{ github.sha }}
             IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}

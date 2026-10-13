@@ -15,6 +15,8 @@ uid=${SMOKE_UID:-4242}
 fixtures=$(cd "$(dirname "$0")/fixtures" && pwd)
 failures=0
 sbcl='sbcl --noinform --non-interactive --no-sysinit --no-userinit'
+# The runtime base kulhar builds on, pinned so the distroless check is repeatable.
+distroless=gcr.io/distroless/cc-debian12@sha256:e5d81ddde149641e2a9ba55be4545bc125c67de07508b03ba4c22e6eb0ded5aa
 
 # A volume rather than a bind mount, so files the test UID creates can be
 # cleaned up without root on the host.
@@ -104,9 +106,49 @@ manifest_paths_exist() {
 }
 
 no_build_leftovers() {
-  run "for p in /usr/bin/sbcl /usr/lib/sbcl /tmp/sbcl /src; do
+  run "for p in /usr/bin/sbcl /usr/lib/sbcl /tmp/sbcl /src /usr/bin/jq; do
          if test -e \$p; then echo \"unexpected: \$p\"; exit 1; fi
        done"
+}
+
+# Do what kulhar does: copy the runtime, a core and the manifest's extra
+# shared libraries (with their copyright and dpkg metadata) into
+# distroless/cc-debian12, then run them there.
+runs_in_distroless() {
+  ctx=$(mktemp -d)
+  tag=kulhar-builder-smoke-runtime:$$
+  # A compressed core, so the runtime really needs libzstd.
+  run "$sbcl --eval '(load \"/fixtures/hello.lisp\")' \
+         --eval '(sb-ext:save-lisp-and-die \"/cache/hello.core\" :toplevel (function kulhar-smoke:main) :compression t)'" || return 1
+  {
+    echo "$manifest" | jq -r '.sbcl.runtime, .sbcl.core | "\(.) \(.)"'
+    echo "/cache/hello.core /opt/hello.core"
+    echo "$manifest" | jq -r '.sbcl.runtime_shared_libraries[] | select(.in_distroless_cc_debian12 | not)
+      | "\(.source) \(.path)", "\(.copyright) \(.copyright)",
+        "\(.dpkg_status) /var/lib/dpkg/status.d/\(.package)",
+        "\(.dpkg_md5sums) /var/lib/dpkg/status.d/\(.package).md5sums"'
+  } >"$ctx/files"
+  cid=$(docker create -v "$cache:/cache" "$image")
+  ok=true
+  while read -r src dst; do
+    echo "copy $src -> $dst"
+    mkdir -p "$ctx/root$(dirname "$dst")"
+    docker cp -L "$cid:$src" "$ctx/root$dst" || ok=false
+  done <"$ctx/files"
+  docker rm "$cid" >/dev/null
+  printf 'FROM %s\nCOPY root/ /\n' "$distroless" >"$ctx/Dockerfile"
+  $ok && docker buildx build --load -q -t "$tag" "$ctx" >/dev/null || ok=false
+  if $ok; then
+    plain=$(docker run --rm --user "$uid:$uid" "$tag" /usr/local/bin/sbcl --noinform --non-interactive \
+              --no-sysinit --no-userinit --eval '(write-line "sbcl.core runs")') || ok=false
+    compressed=$(docker run --rm --user "$uid:$uid" "$tag" /usr/local/bin/sbcl --core /opt/hello.core --noinform) || ok=false
+    echo "sbcl.core: $plain"
+    echo "compressed core: $compressed"
+    [ "$plain" = "sbcl.core runs" ] && [ "$compressed" = "hello from a saved core" ] || ok=false
+  fi
+  docker rmi -f "$tag" >/dev/null 2>&1 || true
+  rm -rf "$ctx"
+  $ok
 }
 
 quicklisp() {
@@ -145,6 +187,7 @@ check "save-lisp-and-die core runs under the image's sbcl --core" save_core
 check "gcc compiles and runs a C program" gcc_runs
 check "every path in the manifest exists" manifest_paths_exist
 check "no bootstrap SBCL, source tree or build files" no_build_leftovers
+check "runtime and manifest libraries run in distroless/cc-debian12" runs_in_distroless
 check "Quicklisp: no dist preloaded, install a dist, quickload" quicklisp
 check "qlot install against fixtures/qlfile" qlot_install
 check "ocicl install against fixtures/ocicl.csv" ocicl_install

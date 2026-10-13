@@ -87,7 +87,27 @@ like this (abridged; =features= lists all of =*features*=):
     "home": "/usr/local/lib/sbcl/",
     "contrib_dir": "/usr/local/lib/sbcl/contrib/",
     "features": ["sb-core-compression", "sb-thread", "x86-64", "linux", "..."],
-    "runtime_shared_libraries": ["libzstd.so.1", "libm.so.6", "libc.so.6", "..."]
+    "runtime_shared_libraries": [
+      {
+        "soname": "libzstd.so.1",
+        "path": "/usr/lib/x86_64-linux-gnu/libzstd.so.1",
+        "source": "/usr/lib/x86_64-linux-gnu/libzstd.so.1.5.4",
+        "package": "libzstd1",
+        "package_version": "1.5.4+dfsg2-5",
+        "in_distroless_cc_debian12": false,
+        "copyright": "/usr/share/doc/libzstd1/copyright",
+        "dpkg_status": "/usr/local/share/kulhar-builder/dpkg-status.d/libzstd1",
+        "dpkg_md5sums": "/usr/local/share/kulhar-builder/dpkg-status.d/libzstd1.md5sums"
+      },
+      {
+        "soname": "libc.so.6",
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "package": "libc6",
+        "package_version": "2.36-9+deb12u14",
+        "in_distroless_cc_debian12": true
+      },
+      "..."
+    ]
   },
   "asdf_version": "3.3.x",
   "architecture": "amd64",
@@ -110,14 +130,32 @@ like this (abridged; =features= lists all of =*features*=):
 }
 #+end_src
 
-=runtime_shared_libraries= lists what the =sbcl= runtime links against (from
-=ldd=). An image that runs the copied runtime has to provide all of them. In
-particular, =libzstd.so.1= is *not* part of =gcr.io/distroless/cc-debian12=.
+** Copying the SBCL runtime into a runtime image
+=runtime_shared_libraries= lists every shared library the =sbcl= runtime links
+against (from =ldd=), with the path it must have and the Debian package it
+comes from. Libraries marked =in_distroless_cc_debian12: true= are already in
+=gcr.io/distroless/cc-debian12=. For each of the others (today only
+=libzstd.so.1=, which zstd core compression needs), an image that runs the
+copied runtime needs four files:
+
+| Copy from this image | To this path in the runtime image                 |
+|----------------------+---------------------------------------------------|
+| =source=             | =path= (a regular file, not a symlink)            |
+| =copyright=          | the same path (the library's license notice)      |
+| =dpkg_status=        | =/var/lib/dpkg/status.d/<package>=                |
+| =dpkg_md5sums=       | =/var/lib/dpkg/status.d/<package>.md5sums=        |
+
+The =status.d= files use the format distroless uses for its own packages. They
+let vulnerability scanners such as Trivy and Grype see the copied package and
+report its security updates. =tests/smoke.sh= does exactly this copy into a
+pinned =distroless/cc-debian12= and runs a zstd-compressed core there.
 
 =base_image.digest= is the digest of the multi-architecture =debian:bookworm-slim=
 index that both Dockerfile stages start from. The final stage runs
 =apt-get upgrade=, so installed Debian packages can be newer than the ones in
-that base.
+that base. The manifest is written in the final stage, so its package versions
+are the ones the image ships. The workflow passes the build date as
+=APT_REFRESH=, so cached layers never hide newer Debian packages.
 
 To read it:
 
