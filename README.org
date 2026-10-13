@@ -305,24 +305,6 @@ sh tests/smoke.sh kulhar-builder:dev 2.6.9
    the signed list. That is the sum of the *uncompressed* tarball.
 3. Push to =trunk= to build and test, then run the workflow manually to publish.
 
-* Maintainer setup
-The workflow can't do these steps:
-
-1. *Make the package public after the first publish.* New GHCR packages are
-   private. Open [[https://github.com/users/crmsnbleyd/packages/container/kulhar-builder/settings]]
-   and, under /Danger Zone/, change visibility to *Public*. Until then, kulhar
-   users can't pull the image anonymously.
-2. *Confirm the package is linked to this repository.* The same settings page
-   should list =crmsnbleyd/kulhar-builder= under /Repository source/, and the
-   repository's /Packages/ sidebar should show =kulhar-builder=. The
-   =org.opencontainers.image.source= label normally links them on first push.
-   If not, use /Connect repository/. Under /Manage Actions access/, check that
-   this repository has the *Write* role, so =GITHUB_TOKEN= can keep pushing.
-3. *Keep Actions enabled* for scheduled runs. GitHub disables schedules in
-   repositories with no activity for 60 days.
-
-No secrets need to be configured. The workflow only uses =GITHUB_TOKEN=.
-
 * License
 [[file:LICENSE][MIT]]. This covers the build scripts in this repository. The images
 contain SBCL (mostly public domain, some BSD-style licensed parts), Debian
